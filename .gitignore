@@ -1,1 +1,4 @@
 /Manifest.toml
+*.mp4
+*.png
+src/plot.jl
