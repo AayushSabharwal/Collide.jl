@@ -9,6 +9,7 @@ using LinearAlgebra
 @variables t
 const D = Differential(t)
 
+include("constraints.jl")
 include("entity.jl")
 include("simulate.jl")
 end

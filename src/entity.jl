@@ -1,4 +1,6 @@
-Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing}}
+# TODO nothing entity can only be root, otherwise merge children
+
+Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing},C<:AbstractConstraint}
     name::Symbol
     shape::S = nothing
     position::SVector{2,Float64} = zero(SVector{2,Float64})
@@ -11,13 +13,39 @@ Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing}}
     linear_drag::Float64 = 0.1
     angular_drag::Float64 = 0.1
     bounce::Float64 = 1.0
-
-    function Entity(name::Symbol, shape::S, args...) where {S}
+    constraint::C = NoConstraint()
+    function Entity(
+        name::Symbol,
+        shape::S,
+        position,
+        velocity,
+        rotation,
+        angular_velocity,
+        mass,
+        inertia,
+        linear_drag,
+        angular_drag,
+        bounce,
+        constraint::C,
+    ) where {S,C}
         if name == :root
             error("Name cannot be :root")
         end
 
-        return new{S}(name, shape, args...)
+        return new{S,C}(
+            name,
+            shape,
+            position,
+            velocity,
+            rotation,
+            angular_velocity,
+            mass,
+            inertia,
+            linear_drag,
+            angular_drag,
+            bounce,
+            constraint,
+        )
     end
 end
 
@@ -34,6 +62,7 @@ function Entity(
     linear_drag = template.linear_drag,
     angular_drag = template.angular_drag,
     bounce = template.bounce,
+    constraint = template.constraint,
 )
     return Entity(;
         name,
@@ -47,32 +76,84 @@ function Entity(
         linear_drag,
         angular_drag,
         bounce,
+        constraint,
     )
 end
 
-function get_system(ent::Entity{S}, parent_pos, gravity) where {S<:AbstractShape{2}}
-    @variables pos(t)[1:2] = (parent_pos .+ ent.position) vel(t)[1:2] = ent.velocity acc(t)[1:2] = [
-        0.0, 0.0
-    ]
-    @variables θ(t) = ent.rotation ω(t) = ent.angular_velocity ɑ(t) = 0.0
-    @parameters m = ent.mass I = ent.inertia μ = ent.linear_drag η = ent.angular_drag
-    # TODO custom force, torque
-    eqs = [
-        collect(D.(pos) .~ vel)
-        collect(D.(vel) .~ acc)
-        collect(acc .~ gravity .- μ .* vel ./ m)
-        D(θ) ~ ω
-        D(ω) ~ ɑ
-        ɑ ~ (-η * ω / I)
-    ]
+function get_symbols(ent::Entity, parent_pos, gravity)
+    arrsymbols = [:pos, :vel, :acc]
+    arrvalues = [parent_pos .+ ent.position, ent.velocity, [0.0, 0.0]]
+    sclsymbols = [:θ, :ω, :ɑ]
+    sclvalues = [ent.rotation, ent.angular_velocity, 0.0]
+    psymbols = [:m, :I, :μ, :η]
+    pvalues = [ent.mass, ent.inertia, ent.linear_drag, ent.angular_drag]
 
-    sys = ODESystem(
-        eqs, t, [pos..., vel..., acc..., θ, ω, ɑ], [gravity..., m, I, μ, η]; name = ent.name
-    )
-    return sys
+    sts = []
+    for (sym, val) in zip(arrsymbols, arrvalues)
+        nm = Symbol(ent.name, :_, sym)
+        push!(sts, (@variables ($nm)(t)[1:2] = val)[1])
+    end
+
+    for (sym, val) in zip(sclsymbols, sclvalues)
+        nm = Symbol(ent.name, :_, sym)
+        push!(sts, (@variables ($nm)(t) = val)[1])
+    end
+
+    prs = []
+    for (sym, val) in zip(psymbols, pvalues)
+        nm = Symbol(ent.name, :_, sym)
+        push!(prs, (@parameters $nm = val)[1])
+    end
+
+    sts = NamedTuple{Tuple(vcat(arrsymbols, sclsymbols))}(Tuple(sts))
+    prs = NamedTuple{Tuple(psymbols)}(Tuple(prs))
+    return sts, prs
 end
 
-get_system(e::Entity{Nothing}, args...) = ODESystem(Equation[], t; name = e.name)
+function get_self_equations(ent::Entity{S}, sts, prs, gravity) where {S<:AbstractShape{2}}
+    return [
+        collect(D.(sts.pos) .~ sts.vel)
+        collect(D.(sts.vel) .~ sts.acc)
+        collect(sts.acc .~ gravity .- prs.μ .* sts.vel ./ prs.m)
+        D(sts.θ) ~ sts.ω
+        D(sts.ω) ~ sts.ɑ
+        sts.ɑ ~ (-prs.η * sts.ω / prs.I)
+    ]
+end
+
+function get_self_equations(
+    ent::Entity{S,StaticConstraint}, sts, prs, gravity
+) where {S<:AbstractShape{2}}
+    return [
+        collect(sts.pos .~ ent.position)
+        collect(sts.vel .~ ent.velocity)
+        collect(sts.acc .~ [0.0, 0.0])
+        sts.θ ~ ent.rotation
+        sts.ω ~ ent.angular_velocity
+        sts.ɑ ~ 0.0
+    ]
+end
+
+function get_relative_equations(ent::Entity{S}, args...) where {S<:AbstractShape{2}}
+    return Equation[]
+end
+
+function get_relative_equations(
+    ent::Entity{S,RodConstraint}, selfsts, selfprs, parsts, parprs, parent_pos, gravity
+) where {S<:AbstractShape{2}}
+    rodlen = norm(ent.constraint.parent_end .- (ent.position + ent.constraint.self_end))
+    s, c = sincos(selfsts.θ)
+    self_rot = SMatrix{2,2}(c, s, -s, c)
+    s, c = sincos(parsts.θ)
+    par_rot = SMatrix{2,2}(c, s, -s, c)
+    return [
+        0.0 ~
+            norm(
+                (selfsts.pos .+ self_rot * ent.constraint.self_end) .-
+                (parsts.pos .+ par_rot * ent.constraint.parent_end),
+            ) - rodlen,
+    ]
+end
 
 struct World
     name::Symbol
@@ -137,25 +218,39 @@ end
 Base.:∘(e::Entity, w::Entity) = e ∘ World(w)
 
 function get_system(w::World, gravity = [0.0, -9.81])
-    @parameters g[1:2] = SVector{2}(gravity)
-    systems = [get_system(w[w.name], zero(SVector{2,Float64}), g)]
+    @parameters g[1:2] = gravity
+    sts = Dict{Symbol,NamedTuple}()
+    prs = Dict{Symbol,NamedTuple}()
+    eqs = Equation[]
     positions = Dict{Symbol,SVector{2,Float64}}(w.name => w[w.name].position)
     for node in PreOrderDFS(IndexNode(w))
         isroot(node) && continue
-        if !isempty(children(node)) && !isroot(node)
+        if !isempty(children(node))
             positions[node.index] =
                 nodevalue(node).position .+ positions[parentindex(node.tree, node.index)]
         end
         if haskey(node.tree.entities, node.index)
-            push!(
-                systems,
-                get_system(
-                    nodevalue(node), positions[parentindex(node.tree, node.index)], g
-                ),
-            )
+            ent = nodevalue(node)
+            parind = parentindex(node.tree, node.index)
+            s, p = get_symbols(ent, positions[parind], g)
+            sts[node.index] = s
+            prs[node.index] = p
+            append!(eqs, get_self_equations(ent, s, p, g))
+            # append!(
+            #     eqs,
+            #     get_relative_equations(
+            #         ent, s, p, sts[parind], prs[parind], positions[parind], g
+            #     ),
+            # )
         end
     end
-    sys = compose(systems...; name = w.name)
+    sys = ODESystem(
+        eqs,
+        t,
+        reduce(vcat, reduce.(vcat, collect.(values.(values(sts))))),
+        vcat(reduce(vcat, reduce.(vcat, collect.(values.(values(prs))))), collect(g));
+        name = w.name,
+    )
     return sys
 end
 

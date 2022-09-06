@@ -129,13 +129,15 @@ function Simulation(world::World, gravity = [0.0, -9.81])
     if length(collision_pairs) == 0
         integrator = init(problem, Tsit5(); save_everystep = false)
     else
-        cb = VectorContinuousCallback(cbdata, cbdata, length(collision_pairs), rootfind=SciMLBase.LeftRootFind)
+        cb = VectorContinuousCallback(
+            cbdata, cbdata, length(collision_pairs); rootfind = SciMLBase.LeftRootFind
+        )
         integrator = init(problem, Tsit5(); save_everystep = false, callback = cb)
     end
     return Simulation(problem, integrator, cbdata)
 end
 
-get_item_symbol(sysname, itemname) = Symbol("$(sysname)₊$(itemname)(t)")
+get_item_symbol(sysname, itemname) = Symbol("$(sysname)_$(itemname)(t)")
 
 function get_array_item_symbol(sysname, itemname, i)
     return Symbol("getindex(", get_item_symbol(sysname, itemname), ", $i)")
@@ -167,7 +169,7 @@ function (cbdata::CallbackData)(out, u, t, integrator)
     end
 end
 
-get_system_property(system, obj, property) = getproperty(system, Symbol(obj, "₊", property))
+get_system_property(system, obj, property) = getproperty(system, Symbol(obj, "_", property))
 
 function (cbdata::CallbackData)(integrator, eidx)
     ba, bb = cbdata.collision_pairs[eidx]
