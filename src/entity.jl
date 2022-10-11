@@ -116,6 +116,8 @@ function get_self_equations(::Entity{S}, sts, prs, gravity) where {S<:AbstractSh
     ]
 end
 
+abstract type AbstractConstraint end
+
 struct World
     name::Symbol
     entities::Dict{Symbol,Entity}
