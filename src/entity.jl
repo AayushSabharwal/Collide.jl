@@ -1,6 +1,6 @@
 # TODO nothing entity can only be root, otherwise merge children
 
-Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing},C<:AbstractConstraint}
+Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing}}
     name::Symbol
     shape::S = nothing
     position::SVector{2,Float64} = zero(SVector{2,Float64})
@@ -13,7 +13,6 @@ Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing},C<:AbstractConstrai
     linear_drag::Float64 = 0.1
     angular_drag::Float64 = 0.1
     bounce::Float64 = 1.0
-    constraint::C = NoConstraint()
     function Entity(
         name::Symbol,
         shape::S,
@@ -26,13 +25,12 @@ Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing},C<:AbstractConstrai
         linear_drag,
         angular_drag,
         bounce,
-        constraint::C,
-    ) where {S,C}
-        if name == :root
-            error("Name cannot be :root")
+    ) where {S}
+        if name == :world
+            error("Name cannot be :world")
         end
 
-        return new{S,C}(
+        return new{S}(
             name,
             shape,
             position,
@@ -44,7 +42,6 @@ Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing},C<:AbstractConstrai
             linear_drag,
             angular_drag,
             bounce,
-            constraint,
         )
     end
 end
@@ -62,7 +59,6 @@ function Entity(
     linear_drag = template.linear_drag,
     angular_drag = template.angular_drag,
     bounce = template.bounce,
-    constraint = template.constraint,
 )
     return Entity(;
         name,
@@ -76,14 +72,13 @@ function Entity(
         linear_drag,
         angular_drag,
         bounce,
-        constraint,
     )
 end
 
-function get_symbols(ent::Entity, parent_pos, gravity)
+function get_symbols(ent::Entity)
     arrsymbols = [:pos, :vel, :acc]
-    arrvalues = [parent_pos .+ ent.position, ent.velocity, [0.0, 0.0]]
-    sclsymbols = [:θ, :ω, :ɑ]
+    arrvalues = [ent.position, ent.velocity, [0.0, 0.0]]
+    sclsymbols = [:θ, :ω, :α]
     sclvalues = [ent.rotation, ent.angular_velocity, 0.0]
     psymbols = [:m, :I, :μ, :η]
     pvalues = [ent.mass, ent.inertia, ent.linear_drag, ent.angular_drag]
@@ -110,158 +105,72 @@ function get_symbols(ent::Entity, parent_pos, gravity)
     return sts, prs
 end
 
-function get_self_equations(ent::Entity{S}, sts, prs, gravity) where {S<:AbstractShape{2}}
+function get_self_equations(::Entity{S}, sts, prs, gravity) where {S<:AbstractShape{2}}
     return [
         collect(D.(sts.pos) .~ sts.vel)
         collect(D.(sts.vel) .~ sts.acc)
         collect(sts.acc .~ gravity .- prs.μ .* sts.vel ./ prs.m)
         D(sts.θ) ~ sts.ω
-        D(sts.ω) ~ sts.ɑ
-        sts.ɑ ~ (-prs.η * sts.ω / prs.I)
-    ]
-end
-
-function get_self_equations(
-    ent::Entity{S,StaticConstraint}, sts, prs, gravity
-) where {S<:AbstractShape{2}}
-    return [
-        collect(sts.pos .~ ent.position)
-        collect(sts.vel .~ ent.velocity)
-        collect(sts.acc .~ [0.0, 0.0])
-        sts.θ ~ ent.rotation
-        sts.ω ~ ent.angular_velocity
-        sts.ɑ ~ 0.0
-    ]
-end
-
-function get_relative_equations(ent::Entity{S}, args...) where {S<:AbstractShape{2}}
-    return Equation[]
-end
-
-function get_relative_equations(
-    ent::Entity{S,RodConstraint}, selfsts, selfprs, parsts, parprs, parent_pos, gravity
-) where {S<:AbstractShape{2}}
-    rodlen = norm(ent.constraint.parent_end .- (ent.position + ent.constraint.self_end))
-    s, c = sincos(selfsts.θ)
-    self_rot = SMatrix{2,2}(c, s, -s, c)
-    s, c = sincos(parsts.θ)
-    par_rot = SMatrix{2,2}(c, s, -s, c)
-    return [
-        0.0 ~
-            norm(
-                (selfsts.pos .+ self_rot * ent.constraint.self_end) .-
-                (parsts.pos .+ par_rot * ent.constraint.parent_end),
-            ) - rodlen,
+        D(sts.ω) ~ sts.α
+        sts.α ~ (-prs.η * sts.ω / prs.I)
     ]
 end
 
 struct World
     name::Symbol
     entities::Dict{Symbol,Entity}
-    children::Dict{Symbol,Vector{Symbol}}
-    parent::Dict{Symbol,Symbol}
+    constraints::Dict{Set{Symbol},AbstractConstraint}
 end
 
-function World(; name::Symbol)
-    return World(name, Dict(name => Entity(; name)), Dict(name => []), Dict())
+World(name) = World(name, Dict(), Dict())
+
+Base.haskey(w::World, sym::Symbol) = haskey(w.entities, sym)
+
+Base.haskey(w::World, a::Symbol, b::Symbol) = haskey(w.constraints, Set((a, b)))
+
+Base.getindex(w::World, sym::Symbol) = w.entities[sym]
+
+Base.getindex(w::World, a::Symbol, b::Symbol) = w.constraints[Set((a, b))]
+
+function Base.push!(w::World, e::Entity)
+    haskey(w, e.name) && error("Entity with name $(e.name) already exists")
+    w.entities[e.name] = e
+    return w
 end
 
-function World(entity::Entity)
-    return World(entity.name, Dict(entity.name => entity), Dict(entity.name => []), Dict())
+function Base.setindex!(w::World, c::AbstractConstraint, a::Symbol, b::Symbol)
+    key = Set((a, b))
+    haskey(w.constraints, key) || (w.constraints[key] = AbstractConstraint[])
+    push!(w.constraints[key], c)
+    return c
 end
 
-World(w::World) = w
-
-Base.length(w::World) = length(w.entities)
-
-Base.getindex(w::World, idx) = w.entities[idx]
-
-function Base.:+(e::Union{Entity,World}, es::Union{Entity,World}...)
-    temp_name = Symbol(rand(UInt16))
-    w = (World(e), World.(es)...)
-    entities = Dict(
-        ∪(getproperty.(w, :entities)..., [temp_name => Entity(; name = temp_name)])
-    )
-    if length(entities) != sum(length.(getproperty.(w, :entities))) + 1
-        error("Duplicate entities")
-    end
-
-    children = Dict(
-        ∪(getproperty.(w, :children)..., [temp_name => collect(getproperty.(w, :name))])
-    )
-    parent = Dict(
-        ∪(getproperty.(w, :parent)..., collect(getproperty.(w, :name) .=> temp_name))
-    )
-
-    return World(temp_name, entities, children, parent)
+function Base.delete!(w::World, sym::Symbol)
+    delete!(w.entities, sym)
+    delete!.((w.constraints,), findall(k -> sym in k, w.constraints))
+    return w
 end
 
-function Base.:∘(e::Entity, w::World)
-    if haskey(w.entities, w.name) && !isnothing(w[w.name].shape)
-        error("Can only combine when world has no root")
-    end
-    entities = copy(w.entities)
-    delete!(entities, w.name)
-    entities[e.name] = e
-
-    children = copy(w.children)
-    children[e.name] = w.children[w.name]
-    delete!(children, w.name)
-
-    parent = copy(w.parent)
-    for ch in children[e.name]
-        parent[ch] = e.name
-    end
-    return World(e.name, entities, children, parent)
+function Base.delete!(w::World, a::Symbol, b::Symbol)
+    delete!(w.constraints, Set((a, b)))
+    return w
 end
-
-Base.:∘(e::Entity, w::Entity) = e ∘ World(w)
 
 function get_system(w::World, gravity = [0.0, -9.81])
     @parameters g[1:2] = gravity
+
     sts = Dict{Symbol,NamedTuple}()
     prs = Dict{Symbol,NamedTuple}()
     eqs = Equation[]
-    positions = Dict{Symbol,SVector{2,Float64}}(w.name => w[w.name].position)
-    for node in PreOrderDFS(IndexNode(w))
-        isroot(node) && continue
-        if !isempty(children(node))
-            positions[node.index] =
-                nodevalue(node).position .+ positions[parentindex(node.tree, node.index)]
-        end
-        if haskey(node.tree.entities, node.index)
-            ent = nodevalue(node)
-            parind = parentindex(node.tree, node.index)
-            s, p = get_symbols(ent, positions[parind], g)
-            sts[node.index] = s
-            prs[node.index] = p
-            append!(eqs, get_self_equations(ent, s, p, g))
-            # append!(
-            #     eqs,
-            #     get_relative_equations(
-            #         ent, s, p, sts[parind], prs[parind], positions[parind], g
-            #     ),
-            # )
-        end
+    for ename in keys(w.entities)
+        s, p = get_symbols(w[ename])
+        sts[ename] = s
+        prs[ename] = p
+        append!(eqs, get_self_equations(w[ename], s, p, g))
     end
-    sys = ODESystem(
-        eqs,
-        t,
-        reduce(vcat, reduce.(vcat, collect.(values.(values(sts))))),
-        vcat(reduce(vcat, reduce.(vcat, collect.(values.(values(prs))))), collect(g));
-        name = w.name,
-    )
+
+    nested_values(x) = reduce(vcat, collect.(reduce(vcat, collect.(values.(values(x))))))
+
+    sys = ODESystem(eqs, t, nested_values(sts), vcat(nested_values(prs), collect(g)); name = w.name)
     return sys
 end
-
-# AbstractTree interface
-AbstractTrees.childindices(tree::World, index) = get(tree.children, index, ())
-AbstractTrees.ParentLinks(::Type{World}) = AbstractTrees.StoredParents()
-AbstractTrees.parentindex(tree::World, index) = get(tree.parent, index, nothing)
-AbstractTrees.rootindex(tree::World) = tree.name
-function AbstractTrees.ischild(
-    n1::IndexNode{World,Symbol}, n2::IndexNode{World,Symbol}; equiv = (===)
-)
-    return equiv(n1.tree.parent[n1.index], n2.index)
-end
-AbstractTrees.isroot(x::IndexNode{World,Symbol}) = x.tree.name == x.index
