@@ -14,13 +14,13 @@ SnoopPrecompile = "66db9d55-30c0-4569-8b51-7e840670fc0c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
-DifferentialEquations = "7.5.0"
-ModelingToolkit = "8.27.0"
+DifferentialEquations = "7.5"
+ModelingToolkit = "8.28"
 PrimitiveCollisions = "0.1.0"
-Reexport = "1.2.2"
-SciMLBase = "1.61.0"
-SnoopPrecompile = "1.0.1"
-StaticArrays = "1.5.9"
+Reexport = "1.2"
+SciMLBase = "1.63"
+SnoopPrecompile = "1.0"
+StaticArrays = "1.5"
 julia = "1"
 
 [extras]

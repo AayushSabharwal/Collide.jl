@@ -3,8 +3,7 @@
 A simple, performant and accurate physics engine implemented in pure Julia using ModelingToolkit.jl and DifferentialEquations.jl. Depends on [PrimitiveCollisions.jl](https://github.com/AayushSabharwal/PrimitiveCollisions.jl) for collisions. To use:
 
 ```
-] add https://github.com/AayushSabharwal/PrimitiveCollisions.jl
-] add https://github.com/AayushSabharwal/Collide.jl
+] add Collide
 ```
 
 A simple world with 2 rectangular entities, and no gravity:
