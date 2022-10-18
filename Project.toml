@@ -5,14 +5,22 @@ version = "0.1.0"
 
 [deps]
 DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
-GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 PrimitiveCollisions = "3b8dc6f2-bddc-4c88-9cf9-9f37a0c17a29"
+Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+SnoopPrecompile = "66db9d55-30c0-4569-8b51-7e840670fc0c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+DifferentialEquations = "7.5.0"
+ModelingToolkit = "8.27.0"
+PrimitiveCollisions = "0.1.0"
+Reexport = "1.2.2"
+SciMLBase = "1.61.0"
+SnoopPrecompile = "1.0.1"
+StaticArrays = "1.5.9"
 julia = "1"
 
 [extras]

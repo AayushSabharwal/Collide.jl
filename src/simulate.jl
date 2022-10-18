@@ -1,6 +1,9 @@
 using SciMLBase
 
-const IndexesTupleType = NamedTuple{(:pos, :vel, :θ, :ω, :m, :I, :μ, :η, :entity), Tuple{SVector{2, Int}, SVector{2, Int}, Int, Int, Int, Int, Int, Int, Int}};
+const IndexesTupleType = NamedTuple{
+    (:pos, :vel, :sym_vel, :θ, :ω, :sym_ω, :m, :I, :μ, :η, :entity),
+    Tuple{SVector{2,Int},SVector{2,Int},SVector{2,Num},Int,Int,Num,Int,Int,Int,Int,Int},
+};
 
 struct CallbackData{S}
     system::ODESystem
@@ -17,6 +20,15 @@ struct Simulation{P<:DEProblem,I<:SciMLBase.DEIntegrator,C<:CallbackData}
     callback::C
 end
 
+"""
+    function Simulation(world::World, gravity = [0.0, -9.81])
+
+Return a [`Simulation`](@ref) for the given world, which can be stepped using
+[`DifferentialEquations.step!`](@ref) to advance the simulation. Creates the system using
+[`get_system`](@ref), and adds a callback for collision detection. The solver used is
+`AutoTsit5(Rosenbrock23())`. The underlying integrator is available as `sim.integrator`,
+and intermediate states are not saved during simulation.
+"""
 function Simulation(world::World, gravity = [0.0, -9.81])
     sys = structural_simplify(get_system(world, gravity))
 
@@ -26,10 +38,10 @@ function Simulation(world::World, gravity = [0.0, -9.81])
     for a in keys(world.entities)
         for b in keys(world.entities)
             if a == b ||
-               isnothing(world[a].shape) ||
-               isnothing(world[b].shape) ||
-               (a, b) in collision_pairs ||
-               (b, a) in collision_pairs
+                isnothing(world[a].shape) ||
+                isnothing(world[b].shape) ||
+                (a, b) in collision_pairs ||
+                (b, a) in collision_pairs
                 continue
             end
 
@@ -52,26 +64,36 @@ function Simulation(world::World, gravity = [0.0, -9.81])
         integrator = init(problem, AutoTsit5(Rosenbrock23()); save_everystep = false)
     else
         cb = VectorContinuousCallback(
-            cbdata,
-            cbdata,
-            length(collision_pairs);
-            rootfind = SciMLBase.LeftRootFind,
+            cbdata, cbdata, length(collision_pairs); rootfind = SciMLBase.LeftRootFind
         )
-        integrator =
-            init(problem, AutoTsit5(Rosenbrock23()); save_everystep = false, callback = cb)
+        integrator = init(
+            problem, AutoTsit5(Rosenbrock23()); save_everystep = false, callback = cb
+        )
     end
 
     for (i, a) in enumerate(keys(world.entities))
+        vel_ind = SVector{2}(
+            SciMLBase.sym_to_index.(
+                Symbol.("getindex($(a)_vel(t), " .* ("1", "2") .* ")"), (integrator,)
+            ),
+        )
+        ω_ind = SciMLBase.sym_to_index(Symbol("$(a)_ω(t)"), integrator)
         cbdata.symbols[a] = (
-            pos = SVector{2}(SciMLBase.sym_to_index.(Symbol.("getindex($(a)_pos(t), " .* ("1", "2") .* ")"), (integrator, ))),
-            vel = SVector{2}(SciMLBase.sym_to_index.(Symbol.("getindex($(a)_vel(t), " .* ("1", "2") .* ")"), (integrator, ))),
+            pos = SVector{2}(
+                SciMLBase.sym_to_index.(
+                    Symbol.("getindex($(a)_pos(t), " .* ("1", "2") .* ")"), (integrator,)
+                ),
+            ),
+            vel = vel_ind,
+            sym_vel = states(sys)[vel_ind],
             θ = SciMLBase.sym_to_index(Symbol("$(a)_θ(t)"), integrator),
-            ω = SciMLBase.sym_to_index(Symbol("$(a)_ω(t)"), integrator),
+            ω = ω_ind,
+            sym_ω = states(sys)[ω_ind],
             m = findfirst(==(Symbol("$(a)_m")), SciMLBase.getparamsyms(integrator)),
             I = findfirst(==(Symbol("$(a)_I")), SciMLBase.getparamsyms(integrator)),
             μ = findfirst(==(Symbol("$(a)_μ")), SciMLBase.getparamsyms(integrator)),
             η = findfirst(==(Symbol("$(a)_η")), SciMLBase.getparamsyms(integrator)),
-            entity = i
+            entity = i,
         )
         push!(cbdata.shapes, world[a].shape)
         push!(cbdata.bounces, world[a].bounce)
@@ -92,7 +114,9 @@ function (cbdata::CallbackData)(out, u, t, integrator)
         s, c = sincos(rot_a)
         rot_mat = SMatrix{2,2}(c, -s, s, c)
         state = State(rot_mat * SVector{2}(pos_b .- pos_a), rot_b - rot_a)
-        coldata::CollisionData{Float64} = check_collision(cbdata.shapes[idxs_a.entity], cbdata.shapes[idxs_b.entity], state)
+        coldata::CollisionData{Float64} = check_collision(
+            cbdata.shapes[idxs_a.entity], cbdata.shapes[idxs_b.entity], state
+        )
         out[i] = coldata.separation
         cbdata.collision_axes[i] = SMatrix{2,2}(c, s, -s, c) * coldata.direction
     end
@@ -102,7 +126,7 @@ function (cbdata::CallbackData)(integrator, eidx)
     ba, bb = cbdata.collision_pairs[eidx]
     idxs_a = cbdata.symbols[ba]
     idxs_b = cbdata.symbols[bb]
-    
+
     ua = getindex.((integrator,), idxs_a.vel)
     ub = getindex.((integrator,), idxs_b.vel)
     ma = integrator.p[idxs_a.m]
@@ -122,7 +146,9 @@ function (cbdata::CallbackData)(integrator, eidx)
     rot_mat = SMatrix{2,2}(c, -s, s, c)
     inv_rot_mat = SMatrix{2,2}(c, s, -s, c)
     state = State(rot_mat * SVector{2}(posb - posa), rotb - rota)
-    ps::NTuple{2,SVector{2,Float64}} = closest_pair(cbdata.shapes[idxs_a.entity], cbdata.shapes[idxs_b.entity], state)
+    ps::NTuple{2,SVector{2,Float64}} = closest_pair(
+        cbdata.shapes[idxs_a.entity], cbdata.shapes[idxs_b.entity], state
+    )
     pa = inv_rot_mat * ps[1] + posa
     pb = inv_rot_mat * ps[2] + posa
     r1 = pa - posa
@@ -149,13 +175,22 @@ function (cbdata::CallbackData)(integrator, eidx)
     vrota = ang_ua + my_cross(r1, cnorm) * J / Ia
     vrotb = ang_ub - my_cross(r2, cnorm) * J / Ib
 
-    set_u!.((integrator,), getindex.((cbdata.system.states,), idxs_a.vel), va)
-    set_u!.((integrator,), getindex.((cbdata.system.states,), idxs_b.vel), vb)
+    set_u!.((integrator,), idxs_a.sym_vel, va)
+    set_u!.((integrator,), idxs_b.sym_vel, vb)
 
-    set_u!(integrator, cbdata.system.states[idxs_a.ω], vrota)
-    set_u!(integrator, cbdata.system.states[idxs_b.ω], vrotb)
+    set_u!(integrator, idxs_a.sym_ω, vrota)
+    set_u!(integrator, idxs_b.sym_ω, vrotb)
 
     return nothing
 end
 
-step!(sim::Simulation, args...) = DifferentialEquations.step!(sim.integrator, args...)
+"""
+    function DifferentialEquations.step!(sim::Simulation, args...)
+
+Steps the given [`Simulation`]. `args...` are forwarded to `DifferentialEquations.step!`.
+See the relevant [DiffEq docs](https://diffeq.sciml.ai/latest/basics/integrator/#SciMLBase.step!)
+for further information.
+"""
+function DifferentialEquations.step!(sim::Simulation, args...)
+    return DifferentialEquations.step!(sim.integrator, args...)
+end
