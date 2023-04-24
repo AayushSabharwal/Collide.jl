@@ -10,7 +10,7 @@ ModelingToolkit = "961ee093-0014-501f-94e3-6117800e7a78"
 PrimitiveCollisions = "3b8dc6f2-bddc-4c88-9cf9-9f37a0c17a29"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
-SnoopPrecompile = "66db9d55-30c0-4569-8b51-7e840670fc0c"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
@@ -19,7 +19,7 @@ ModelingToolkit = "8.28"
 PrimitiveCollisions = "0.1.0"
 Reexport = "1.2"
 SciMLBase = "1.63"
-SnoopPrecompile = "1.0"
+PrecompileTools = "1.0"
 StaticArrays = "1.5"
 julia = "1"
 

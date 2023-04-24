@@ -16,9 +16,9 @@ include("entity.jl")
 export Simulation
 include("simulate.jl")
 
-using SnoopPrecompile: SnoopPrecompile
+using PrecompileTools: PrecompileTools
 
-SnoopPrecompile.@precompile_all_calls begin
+PrecompileTools.@compile_workload begin
     e = Entity(; name = :a, shape = Rect(1.0, 1.0), linear_drag = 0.5)
     e2 = Entity(;
         name = :b,
