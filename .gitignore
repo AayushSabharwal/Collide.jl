@@ -1,4 +1,6 @@
 /Manifest.toml
 *.mp4
 *.png
+*.mkv
 src/plot.jl
+.DS_Store

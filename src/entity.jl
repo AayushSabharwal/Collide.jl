@@ -1,276 +1,139 @@
-"""
-    function Entity(; kwargs...)
-
-Create an `Entity` representing a body in the simulation.
-
-# Keywords
-- `name::Symbol`: The name for the entity. Necessary, and must be distinct from all other
-  entities in the [`World`](@ref).
-- `shape::AbstractShape{2} = nothing`: The shape of the entity, specified as a 2D
-  primitive from `PrimitiveCollisions.jl`. Can also be `nothing`, which removes the entity
-  from the simulation.
-- `position::SVector{2,Float64} = @SVector[0.0, 0.0]`: The initial position of the entity.
-- `velocity::SVector{2,Float64} = @SVector[0.0, 0.0]`: The initial velocity of the entity.
-- `rotation::Float64 = 0.0`: The initial rotation of the entity. Specified in radians in
-  an anticlockwise direction from the positive x-axis.
-- `angular_velocity::Float64 = 0.0`: The initial angular velocity of the entity. Specified
-  in radians per second, in the same direction as `rotation`.
-- `mass::Float64 = 1.0`: The mass of the entity. Can be `Inf` to make the body immovable.
-- `inertia::Float64 = 1.0`: The moment of inertia ("rotational mass") of the entity. Can
-  be `Inf` to make the body impossible to rotate.
-- `linear_drag::Float64 = 0.1`: The linear drag coefficient. Linear drag force is calculated
-  as the product of this coefficient and the negative of the velocity of the entity.
-- `angular_drag::Float64 = 0.1`: The angular drag coefficient. Angular drag torque is
-  calculated as the product of this coefficient and the negative of the angular velocity
-  of the entity.
-- `bounce::Float64 = 1.0`: The coefficient of restitution used during collision resolution
-  is taken as the minimum of the `bounce` values of the two involved bodies. Typically in
-  the range `[0.0, 1.0]`. 1.0 is a perfectly elastic collision, 0.0 is a perfectly
-  inelastic collision.
-
-# Symbolic variables
-In the `ODESystem` returned by [`get_system`](@ref) the variables/parameters for an entity
-are referred to by sightly different names, prefixed by the name of the entity followed by
-an underscore (`_`). Following are the names (`\$name_` is the prefix):
-- `\$name_pos(t)[1:2]`: Position
-- `\$name_vel(t)[1:2]`: velocity
-- `\$name_acc(t)[1:2]`: Acceleration
-- `\$name_θ(t)`: Rotation
-- `\$name_ω(t)`: Angular velocity
-- `\$name_α(t)`: Angular acceleration
-- `\$name_m`: Mass
-- `\$name_I`: Moment of inertia
-- `\$name_μ`: Linear drag coefficient
-- `\$name_η`: Angular drag coefficient
-"""
-Base.@kwdef struct Entity{S<:Union{AbstractShape{2},Nothing}}
+@kwdef struct Entity{F,S<:Shape{F}}
     name::Symbol
-    shape::S = nothing
-    position::SVector{2,Float64} = zero(SVector{2,Float64})
-    velocity::SVector{2,Float64} = zero(SVector{2,Float64})
-    rotation::Float64 = 0.0
-    angular_velocity::Float64 = 0.0
-    # TODO automatic mass and inertia calculation
-    mass::Float64 = 1.0
-    inertia::Float64 = 1.0
-    linear_drag::Float64 = 0.1
-    angular_drag::Float64 = 0.1
-    bounce::Float64 = 1.0
-    function Entity(
-        name::Symbol,
-        shape::S,
-        position,
-        velocity,
-        rotation,
-        angular_velocity,
-        mass,
-        inertia,
-        linear_drag,
-        angular_drag,
-        bounce,
-    ) where {S}
-        if name == :world
-            error("Name cannot be :world")
-        end
-
-        return new{S}(
-            name,
-            shape,
-            position,
-            velocity,
-            rotation,
-            angular_velocity,
-            mass,
-            inertia,
-            linear_drag,
-            angular_drag,
-            bounce,
-        )
-    end
+    shape::S
+    pos::Point{F} = zero(Point{F})
+    vel::Point{F} = zero(Point{F})
+    acc::Point{F} = zero(Point{F})
+    rot::F = zero(F)
+    rvel::F = zero(F)
+    racc::F = zero(F)
+    m::F = one(F)
+    I::F = one(F)
+    lindrag::F = F(0.1)
+    angdrag::F = F(0.1)
+    spring_constant::F = F(100)
+    damping_coeff::F = F(10)
 end
 
-"""
-    function Entity(template::Entity; kwargs...)
+Entity{F}(; shape, kwargs...) where {F} = Entity{F,typeof(shape)}(; shape, kwargs...)
 
-Create an copy of an existing entity `template`, with some values modified. Keyword
-arguments are the same as in the keyword constructor, and `name` must be specified
-regardless.
-"""
-function Entity(
-    template::Entity;
-    name::Symbol,
-    shape = template.shape,
-    position = template.position,
-    velocity = template.velocity,
-    rotation = template.rotation,
-    angular_velocity = template.angular_velocity,
-    mass = template.mass,
-    inertia = template.inertia,
-    linear_drag = template.linear_drag,
-    angular_drag = template.angular_drag,
-    bounce = template.bounce,
-)
-    return Entity(;
-        name,
-        shape,
-        position,
-        velocity,
-        rotation,
-        angular_velocity,
-        mass,
-        inertia,
-        linear_drag,
-        angular_drag,
-        bounce,
-    )
+function get_system(entity::Entity{Fl}, gravity) where {Fl}
+    @variables pos(t)[1:2] = entity.pos vel(t)[1:2] = entity.vel acc(t)[1:2] = entity.acc
+    @variables θ(t) = entity.rot ω(t) = entity.rvel α(t) = entity.racc
+    @variables F(t)[1:2] = [zero(Fl), zero(Fl)] τ(t) = zero(Fl)
+    @parameters m = entity.m I = entity.I μ = entity.lindrag η = entity.angdrag
+    @parameters k = entity.spring_constant c = entity.damping_coeff
+
+
+    ODESystem(Equation[], t, [pos..., vel..., acc..., F..., θ, ω, α, τ], [m, I, μ, η, k, c]; name = entity.name)
 end
 
-"""
-    function get_symbols(ent::Entity)
-
-Get the symbolic variables and parameters for the given entity, in a `NamedTuple`.
-"""
-function get_symbols(ent::Entity)
-    arrsymbols = [:pos, :vel, :acc]
-    arrvalues = [ent.position, ent.velocity, [0.0, 0.0]]
-    sclsymbols = [:θ, :ω, :α]
-    sclvalues = [ent.rotation, ent.angular_velocity, 0.0]
-    psymbols = [:m, :I, :μ, :η]
-    pvalues = [ent.mass, ent.inertia, ent.linear_drag, ent.angular_drag]
-
-    sts = []
-    for (sym, val) in zip(arrsymbols, arrvalues)
-        nm = Symbol(ent.name, :_, sym)
-        push!(sts, (@variables ($nm)(t)[1:2] = val)[1])
-    end
-
-    for (sym, val) in zip(sclsymbols, sclvalues)
-        nm = Symbol(ent.name, :_, sym)
-        push!(sts, (@variables ($nm)(t) = val)[1])
-    end
-
-    prs = []
-    for (sym, val) in zip(psymbols, pvalues)
-        nm = Symbol(ent.name, :_, sym)
-        push!(prs, (@parameters $nm = val)[1])
-    end
-
-    sts = NamedTuple{Tuple(vcat(arrsymbols, sclsymbols))}(Tuple(sts))
-    prs = NamedTuple{Tuple(psymbols)}(Tuple(prs))
-    return sts, prs
-end
-
-"""
-    function get_self_equations(ent::Entity{S}, sts, prs, gravity)
-
-Given an entity, its symbolic states and parameters, and the force of gravity,
-returns the equations of motion for the entity.
-"""
-function get_self_equations(::Entity{S}, sts, prs, gravity) where {S<:AbstractShape{2}}
+function get_equations(e_sys, gravity)
     return [
-        collect(D.(sts.pos) .~ sts.vel)
-        collect(D.(sts.vel) .~ sts.acc)
-        collect(sts.acc .~ gravity .- prs.μ .* sts.vel ./ prs.m)
-        D(sts.θ) ~ sts.ω
-        D(sts.ω) ~ sts.α
-        sts.α ~ (-prs.η * sts.ω / prs.I)
+        collect(D.(e_sys.pos) .~ e_sys.vel)
+        collect(D.(e_sys.vel) .~ e_sys.acc)
+        collect(e_sys.acc .~ gravity .- e_sys.μ .* e_sys.vel ./ e_sys.m .+ e_sys.F ./ e_sys.m)
+        D(e_sys.θ) ~ e_sys.ω
+        D(e_sys.ω) ~ e_sys.α
+        e_sys.α ~ -e_sys.η * e_sys.ω / e_sys.I + e_sys.τ / e_sys.I
     ]
 end
 
-abstract type AbstractConstraint end
-
-"""
-    function World(name::Symbol)
-
-Creates a world containing all [`Entity`](@ref)s to be simulated. The system returned from
-[`get_system`](@ref) is named `name`. Entities can be added to a world using
-[`Base.push!`](@ref). [`Base.getindex`](@ref) returns an [`Entity`](@ref) given its name.
-[`Base.haskey`](@ref) checks whether an entity with the given name exists in this world.
-[`Base.delete!`](@ref) deletes the entity with the given name from the world.
-"""
-struct World
-    name::Symbol
-    entities::Dict{Symbol,Entity}
-    constraints::Dict{Set{Symbol},AbstractConstraint}
+# i j k
+# 0 0 ω
+# x y 0
+function reverse_transform(point, pos, θ)
+    s = sin(θ)
+    c = cos(θ)
+    rot = SMatrix{2,2}(c, s, -s, c)
+    return rot * SVector{2}(point) .+ pos
 end
 
-World(name::Symbol) = World(name, Dict(), Dict())
+function get_collision_system(ea::Entity{Fl}, eb::Entity{Fl}, ea_sys, eb_sys) where {Fl}
 
-"""
-    function Base.haskey(w::World, sym::Symbol)
+    cur_collision = collision(ea.shape, eb.shape, State(eb.pos .- ea.pos, eb.rot - ea.rot))
+    i_pa = reverse_transform(cur_collision[2:3], ea.pos, ea.rot) .- ea.pos
+    i_pb = reverse_transform(cur_collision[4:5], ea.pos, ea.rot) .- eb.pos
+    cnorm = (i_pb .+ eb.pos .- i_pa .- ea.pos) ./ cur_collision[1]
+    i_va = ea.vel .+ SVector{2}(-i_pa[2], i_pa[1]) .* ea.rvel
+    i_vb = eb.vel .+ SVector{2}(-i_pb[2], i_pb[1]) .* eb.rvel
+    @variables result(t)[1:5] = cur_collision dist(t) = cur_collision[1]
+    @variables pa(t)[1:2] = i_pa pb(t)[1:2] = i_pb
+    @variables va(t)[1:2] = i_va vb(t)[1:2] = i_vb
+    @variables n(t)[1:2] = cnorm
+    @variables Fa_raw(t)[1:2] = zero(SVector{2,Fl}) Fb_raw(t)[1:2] = zero(SVector{2,Fl})
+    @variables Fa(t)[1:2] = zero(SVector{2,Fl}) Fb(t)[1:2] = zero(SVector{2,Fl})
+    @variables τa(t) = zero(Fl) τb(t) = zero(Fl)
 
-Check whether the [`World`](@ref) contains an entity with name `sym`.
-"""
-Base.haskey(w::World, sym::Symbol) = haskey(w.entities, sym)
-
-Base.haskey(w::World, a::Symbol, b::Symbol) = haskey(w.constraints, Set((a, b)))
-
-"""
-    function Base.getindex(w::World, sym::Symbol)
-
-Return the [`Entity`](@ref) with name `sym` in [`World`](@ref).
-"""
-Base.getindex(w::World, sym::Symbol) = w.entities[sym]
-
-Base.getindex(w::World, a::Symbol, b::Symbol) = w.constraints[Set((a, b))]
-
-"""
-    function Base.push!(w::World, e::Entity)
-
-Add the given [`Entity`](@ref) to the given [`World`](@ref).
-"""
-function Base.push!(w::World, e::Entity)
-    haskey(w, e.name) && error("Entity with name $(e.name) already exists")
-    w.entities[e.name] = e
-    return w
+    return ODESystem(
+        Equation[],
+        t,
+        [result..., dist, pa..., pb..., va..., vb..., n..., Fa_raw..., Fb_raw..., Fa..., Fb..., τa, τb],
+        [];
+        name = Symbol(:col_, ea.name, :_, eb.name)
+    )
 end
 
-function Base.setindex!(w::World, c::AbstractConstraint, a::Symbol, b::Symbol)
-    key = Set((a, b))
-    haskey(w.constraints, key) || (w.constraints[key] = AbstractConstraint[])
-    push!(w.constraints[key], c)
-    return c
+# rotates axes by θ
+function rot_mat(θ)
+    s, c = sincos(θ)
+    return SMatrix{2,2}(c, -s, s, c)
 end
 
-"""
-    function Base.delete!(w::World, sym::Symbol)
-
-Remove the [`Entity`](@ref) with the name `sym` from the given [`World`](@ref).
-"""
-function Base.delete!(w::World, sym::Symbol)
-    delete!(w.entities, sym)
-    delete!.((w.constraints,), findall(k -> sym in k, w.constraints))
-    return w
+function connect!(ea::Entity{Fl}, eb::Entity{Fl}, ea_sys, eb_sys, col_sys) where {Fl}
+    return [
+        collect(col_sys.result .~ collision(ea.shape, eb.shape, State(rot_mat(ea_sys.θ) * SVector{2}(eb_sys.pos .- ea_sys.pos), eb_sys.θ - ea_sys.θ)))
+        col_sys.dist ~ col_sys.result[1]
+        collect(col_sys.pa .~ rot_mat(-ea_sys.θ) * collect(col_sys.result[2:3]))
+        collect(col_sys.pb .~ rot_mat(-ea_sys.θ) * collect(col_sys.result[4:5]) .+ ea_sys.pos .- eb_sys.pos)
+        collect(col_sys.va .~ ea_sys.vel .+ SVector{2}(-col_sys.pa[2], col_sys.pa[1]) .* ea_sys.ω)
+        collect(col_sys.vb .~ eb_sys.vel .+ SVector{2}(-col_sys.pb[2], col_sys.pb[1]) .* eb_sys.ω)
+        collect(col_sys.n .~ (col_sys.pb .+ eb_sys.pos .- col_sys.pa .- ea_sys.pos) ./ (col_sys.dist))
+        collect(col_sys.Fb_raw .~ (col_sys.dist <= zero(Fl)) * (ea_sys.k * -col_sys.dist) * col_sys.n)
+        collect(col_sys.Fa_raw .~ (col_sys.dist <= zero(Fl)) * (eb_sys.k * -col_sys.dist) * -col_sys.n)
+        collect(col_sys.Fa .~ -col_sys.pa * dot(col_sys.Fa_raw, -col_sys.pa) / dot(col_sys.pa, col_sys.pa))
+        collect(col_sys.Fb .~ -col_sys.pb * dot(col_sys.Fb_raw, -col_sys.pb) / dot(col_sys.pb, col_sys.pb))
+        col_sys.τa ~ col_sys.pa[1] * col_sys.Fa_raw[2] - col_sys.pa[2] * col_sys.Fa_raw[1]
+        col_sys.τb ~ col_sys.pb[1] * col_sys.Fb_raw[2] - col_sys.pb[2] * col_sys.Fb_raw[1]
+    ]
 end
 
-function Base.delete!(w::World, a::Symbol, b::Symbol)
-    delete!(w.constraints, Set((a, b)))
-    return w
+struct World{E<:Entity}
+    entities::Vector{E}
 end
 
-"""
-    function get_system(w::World, gravity = [0.0, -9.81])
-
-Return the `ODESystem` for the given [`World`]. Uses the provided value for the
-acceleration due to gravity, exposed in the `ODESystem` as `g`.
-"""
-function get_system(w::World, gravity = [0.0, -9.81])
+function get_system(world::World, gravity)
     @parameters g[1:2] = gravity
 
-    sts = Dict{Symbol,NamedTuple}()
-    prs = Dict{Symbol,NamedTuple}()
+    systems = Dict{Symbol,ODESystem}()
+    force_rhs = Dict{Symbol,SVector{2,Num}}()
+    torque_rhs = Dict{Symbol,Num}()
     eqs = Equation[]
-    for ename in keys(w.entities)
-        s, p = get_symbols(w[ename])
-        sts[ename] = s
-        prs[ename] = p
-        append!(eqs, get_self_equations(w[ename], s, p, g))
+    for e in world.entities
+        systems[e.name] = get_system(e, g)
+        append!(eqs, get_equations(systems[e.name], gravity))
+        force_rhs[e.name] = SVector{2}(zero(Num), zero(Num))
+        torque_rhs[e.name] = zero(Num)
     end
 
-    nested_values(x) = reduce(vcat, collect.(reduce(vcat, collect.(values.(values(x))))))
+    collision_sys = Dict{Tuple{Symbol,Symbol},ODESystem}()
+    for (ea, eb) in Iterators.product(world.entities, world.entities)
+        if ea.name == eb.name || haskey(collision_sys, (eb.name, ea.name))
+            continue
+        end
 
-    sys = ODESystem(
-        eqs, t, nested_values(sts), vcat(nested_values(prs), collect(g)); name = w.name
-    )
-    return sys
+        c_sys = get_collision_system(ea, eb, systems[ea.name], systems[eb.name])
+        append!(eqs, connect!(ea, eb, systems[ea.name], systems[eb.name], c_sys))
+        collision_sys[(ea.name, eb.name)] = c_sys
+        force_rhs[ea.name] = force_rhs[ea.name] .+ c_sys.Fa
+        force_rhs[eb.name] = force_rhs[eb.name] .+ c_sys.Fb
+        torque_rhs[ea.name] = torque_rhs[ea.name] + c_sys.τa
+        torque_rhs[eb.name] = torque_rhs[eb.name] + c_sys.τb
+    end
+
+    for e in world.entities
+        append!(eqs, collect(systems[e.name].F .~ force_rhs[e.name]))
+        push!(eqs, systems[e.name].τ ~ torque_rhs[e.name])
+    end
+    return compose(ODESystem(eqs, t, [], [g...]; name = :world), vcat(collect(values(systems)), collect(values(collision_sys))))
 end
