@@ -1,3 +1,5 @@
+using IfElse
+
 abstract type Shape{F} end
 
 struct Circle{F} <: Shape{F}
@@ -29,13 +31,13 @@ struct State{F}
 end
 
 function collision(a::Shape, b::Shape, st::State)
-  res = collision(b, a, State(-st.pos, -st.rot))
   s, c = sincos(st.rot)
+  res = collision(b, a, State(SMatrix{2,2}(c, -s, s, c) * -st.pos, -st.rot))
   rot_mat = SMatrix{2,2}(c, s, -s, c)
   SVector{5}(
     res[1],
-    rot_mat * res[2:3] .+ st.pos,
-    rot_mat * res[4:5] .+ st.pos,
+    (rot_mat * res[4:5] .+ st.pos)...,
+    (rot_mat * res[2:3] .+ st.pos)...,
   )
 end
 
@@ -65,15 +67,17 @@ function collision(a::Capsule, b::Circle, st::State)
     )
 end
 
+clamp01(x) = min(one(x), max(zero(x), x))
+
 function collision(a::Capsule, b::Capsule, st::State)
     F = typeof(st.rot)
     eps = F(1e-6)
-    a0 = SVector{2}(-a.length / 2, zero(a.length))
-    a1 = SVector{2}(a.length / 2, zero(a.length))
+    a0 = SVector{2}(-a.half_len, zero(a.half_len))
+    a1 = SVector{2}(a.half_len / 2, zero(a.half_len))
     s, c = sincos(st.rot)
     rot_mat = SMatrix{2,2}(c, s, -s, c)
-    b0 = rot_mat * SVector{2}(-b.length / 2, zero(b.length)) + st.pos
-    b1 = rot_mat * SVector{2}(b.length / 2, zero(b.length)) + st.pos
+    b0 = rot_mat * SVector{2}(-b.half_len, zero(b.half_len)) + st.pos
+    b1 = rot_mat * SVector{2}(b.half_len, zero(b.half_len)) + st.pos
 
     r = b0 - a0
     u = a1 - a0
