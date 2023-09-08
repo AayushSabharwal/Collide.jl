@@ -30,6 +30,8 @@ struct State{F}
     rot::F
 end
 
+collision(a::Shape, b::Shape, p, q, r) = collect(collision(a, b, State(SVector{2}(p, q), r)))
+
 function collision(a::Shape, b::Shape, st::State)
   s, c = sincos(st.rot)
   res = collision(b, a, State(SMatrix{2,2}(c, -s, s, c) * -st.pos, -st.rot))
@@ -52,6 +54,14 @@ function collision(a::Circle, b::Circle, st::State)
 end
 
 function collision(a::Capsule, b::Circle, st::State)
+    collide_capsule_circle(a.half_len, a.radius, b.radius, st.pos..., st.rot)
+end
+
+function collide_capsule_circle(a_half_len, a_radius, b_radius, st_pos_x, st_pos_y, st_rot)
+    _collide_capsule_circle_internal(Capsule(a_half_len, a_radius), Circle(b_radius), State(SVector{2}(st_pos_x, st_pos_y), st_rot))
+end
+
+function _collide_capsule_circle_internal(a::Capsule, b::Circle, st::State)
     p = st.pos
     F = eltype(p)
     h = min(one(F), max(zero(F), p[1] / 2a.half_len + F(0.5)))
