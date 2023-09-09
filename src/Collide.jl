@@ -3,38 +3,25 @@ module Collide
 using ModelingToolkit, DifferentialEquations
 using StaticArrays
 using LinearAlgebra
-using Reexport
+# using Reexport
 
-@reexport import DifferentialEquations: step!
-@reexport using PrimitiveCollisions
+# @reexport import DifferentialEquations: step!
 
 @variables t
 const D = Differential(t)
 
-export Entity, World, get_system
+export Point
+const Point{F} = SVector{2,F}
+
+export Shape, Circle, Capsule, collision, State
+include("collision.jl")
+export Entity, World, get_system, get_collision_system
 include("entity.jl")
-export Simulation
-include("simulate.jl")
 
-using SnoopPrecompile: SnoopPrecompile
+include("plotting.jl")
+# export Simulation
+# include("simulate.jl")
 
-SnoopPrecompile.@precompile_all_calls begin
-    e = Entity(; name = :a, shape = Rect(1.0, 1.0), linear_drag = 0.5)
-    e2 = Entity(;
-        name = :b,
-        shape = Rect(1.0, 1.0),
-        position = SVector{2}(2.1, -1.2),
-        velocity = SVector{2}(-1.0, 0.0),
-    )
-    w = World(:w)
-    push!(w, e)
-    push!(w, e2)
-    haskey(w, :a)
-    w[:a]
-    delete!(w, :a)
-    push!(w, e)
+# using SnoopPrecompile: SnoopPrecompile
 
-    sim = Simulation(w, [0.0, 0.0])
-    step!(sim, 5.0, true)
-end
 end
